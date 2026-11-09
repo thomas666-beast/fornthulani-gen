@@ -1,0 +1,17 @@
+[package]
+name = "fornthulani-gen"
+version = "0.1.0-alpha1"
+edition = "2024"
+description = "Project generator for the fornthulani micro framework."
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/thomas666-beast/fornthulani-gen"
+keywords = ["fornthulani", "scaffold", "generate"]
+categories = ["command-line-utilities", "development-tools"]
+
+[[bin]]
+name = "fornthulani"
+path = "src/main.rs"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }

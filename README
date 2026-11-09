@@ -1,0 +1,296 @@
+fornthulani-gen
+===============
+
+Project generator for the
+[fornthulani](https://crates.io/crates/fornthulani) micro HTTP framework.
+
+Installs a binary called `fornthulani`. Run `fornthulani generate …`
+from any directory to scaffold a project or add a route, controller,
+or plugin to an existing one.
+
+
+----------------------------------------------------------------------
+INSTALL
+----------------------------------------------------------------------
+
+From crates.io (once published):
+
+  cargo install fornthulani-gen
+
+From source:
+
+  git clone https://github.com/thomas666-beast/fornthulani-gen
+  cd fornthulani-gen
+  cargo install --path . --force
+
+After install:
+
+  fornthulani --version
+  fornthulani --help
+
+
+----------------------------------------------------------------------
+COMMANDS
+----------------------------------------------------------------------
+
+  fornthulani generate app <name>              create a new project
+  fornthulani generate route <name>            add a route + controller
+  fornthulani generate controller <name>       add only a controller
+  fornthulani generate plugin <name>           add a Middleware plugin
+
+All `route`, `controller`, and `plugin` commands look for the nearest
+`Cargo.toml` with a `src/main.rs` file — so you run them from inside
+the project, from any subdirectory.
+
+`app` is the only command that creates a new directory; run it from
+wherever you want the project to live.
+
+
+----------------------------------------------------------------------
+GENERATE APP
+----------------------------------------------------------------------
+
+  cd ~/projects
+  fornthulani generate app my-app --fornthulani-path ../fornthulani
+
+Produces:
+
+  my-app/
+    Cargo.toml
+    fornthulani.toml
+    README.md
+    .gitignore
+    src/
+      main.rs
+      app.rs
+      config.rs
+      routes/
+        mod.rs
+        hello.rs
+      controllers/
+        mod.rs
+        hello.rs
+      plugins/
+        mod.rs
+
+Then:
+
+  cd my-app
+  cargo run
+
+and in another terminal:
+
+  curl http://127.0.0.1:8080/hello
+  # hello, fornthulani
+
+The generated project has one working route (`GET /hello`) and one
+working controller (`controllers/hello.rs`). It reads its host, port,
+and default content type from `fornthulani.toml`.
+
+
+----------------------------------------------------------------------
+DEPENDENCY FLAGS
+----------------------------------------------------------------------
+
+`fornthulani generate app` accepts one of two flags to control how
+the generated project depends on `fornthulani`:
+
+  --fornthulani-path <path>       reference a local checkout
+                                  (default: ../fornthulani)
+
+  --fornthulani-version <ver>     reference a crates.io version
+                                  (use this after fornthulani is
+                                  published)
+
+Examples:
+
+  # local development — clones of fornthulani and my-app side by side
+  fornthulani generate app my-app --fornthulani-path ../fornthulani
+
+  # after fornthulani is published
+  fornthulani generate app my-app --fornthulani-version 0.1.0
+
+The two flags are mutually exclusive. If neither is given, `--fornthulani-path ../fornthulani`
+is used.
+
+
+----------------------------------------------------------------------
+GENERATE ROUTE
+----------------------------------------------------------------------
+
+  cd my-app
+  fornthulani generate route users
+
+Produces:
+
+  src/routes/users.rs          the route wiring
+  src/controllers/users.rs     the handler
+
+And appends:
+
+  src/routes/mod.rs       ->  pub mod users;
+                              users::register(router);
+  src/controllers/mod.rs  ->  pub mod users;
+
+The new route is `GET /users` returning the text "users". Open
+`src/controllers/users.rs` and edit the function to do whatever
+you need.
+
+If `src/routes/users.rs` already exists, the command refuses to
+overwrite it. Use a different name, or delete the file first.
+
+
+----------------------------------------------------------------------
+GENERATE CONTROLLER
+----------------------------------------------------------------------
+
+  cd my-app
+  fornthulani generate controller health
+
+Produces:
+
+  src/controllers/health.rs
+
+And appends:
+
+  src/controllers/mod.rs  ->  pub mod health;
+
+Useful when you want the logic separate from the route registration
+(e.g. one controller used by multiple routes, or a controller you
+will wire by hand).
+
+
+----------------------------------------------------------------------
+GENERATE PLUGIN
+----------------------------------------------------------------------
+
+  cd my-app
+  fornthulani generate plugin auth
+
+Produces:
+
+  src/plugins/auth.rs     a struct Auth implementing fornthulani::Middleware
+
+And appends:
+
+  src/plugins/mod.rs  ->  pub mod auth;
+
+The generated file looks like:
+
+  use fornthulani::{Middleware, Request, Response, ThulaniError};
+
+  pub struct Auth;
+
+  impl Middleware for Auth {
+      fn before(&self, _req: &mut Request) -> Result<Option<Response>, ThulaniError> {
+          // inspect or reject the request here
+          Ok(None)
+      }
+
+      fn after(&self, _req: &Request, _resp: &mut Response) {
+          // inspect or mutate the response here
+      }
+  }
+
+To use it, edit `src/main.rs` and add:
+
+  use crate::plugins::auth::Auth;
+
+  let server = Server::new(router)
+      .with_middleware(Auth);
+
+Or attach it to specific routes in `src/routes/<name>.rs`:
+
+  router.get("/admin", admin_handler).with(Auth);
+
+
+----------------------------------------------------------------------
+PROJECT LAYOUT REFERENCE
+----------------------------------------------------------------------
+
+Every generated project has the same shape:
+
+  src/
+    main.rs           entry point; builds Server, attaches global middleware
+    app.rs            builds Router from routes::register
+    config.rs         reads fornthulani.toml
+    routes/           one file per route group
+    controllers/      one file per endpoint
+    plugins/          developer-written Middleware
+
+When you add features with `generate route` / `generate plugin`, the
+new files go into the right subfolder and both `mod.rs` files are
+updated automatically. You never edit `mod.rs` by hand.
+
+
+----------------------------------------------------------------------
+FORNTHULANI.TOML
+----------------------------------------------------------------------
+
+The generated config file has three optional sections:
+
+  [server]
+  host = "127.0.0.1"
+  port = 8080
+
+  [response]
+  default_content_type = "application/json"
+
+  # Add your own sections — the generated config.rs parses them into
+  # a Config struct, so you control what goes here.
+  [auth]
+  api_key = "secret-demo-key"
+
+Every field is optional. Missing values fall back to the defaults
+shown above.
+
+
+----------------------------------------------------------------------
+DESIGN NOTES
+----------------------------------------------------------------------
+
+  - The generator never modifies fornthulani/src/. It only writes files
+    in the target project.
+  - Existing files are never overwritten. If a route, controller, or
+    plugin with the same name exists, the command fails with an error.
+  - `mod.rs` files are updated by appending, never by rewriting.
+    This means manual edits inside mod.rs survive.
+  - Controllers are `fn` pointers. That is why generate route writes a
+    standalone function and wires it in a separate file — the two
+    concerns (URL space vs. handler logic) stay separated.
+  - All paths are relative to the nearest Cargo.toml. Running generate
+    from a subdirectory works.
+
+
+----------------------------------------------------------------------
+HOW IT WORKS
+----------------------------------------------------------------------
+
+The binary is a thin wrapper around two things:
+
+  - clap for argument parsing
+  - embedded string templates for the generated files
+
+There is no template engine, no file watcher, no codegen pipeline.
+Each generator produces plain Rust source you can edit freely.
+If you outgrow the scaffolding, delete the generated file and write
+your own — nothing in fornthulani depends on the generator.
+
+
+----------------------------------------------------------------------
+SEE ALSO
+----------------------------------------------------------------------
+
+  - fornthulani                     the framework
+  - fornthulani-plugin-json-body    req.json::<T>()
+  - fornthulani-plugin-msgpack-body req.msgpack::<T>()
+  - fornthulani-plugin-cors         CORS middleware
+  - ECOSYSTEM.md                    the full ecosystem map
+  - PUBLISHING.md                   how to publish these crates
+
+
+----------------------------------------------------------------------
+LICENSE
+----------------------------------------------------------------------
+
+Dual-licensed under MIT or Apache-2.0, at your option.
