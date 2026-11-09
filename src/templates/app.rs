@@ -5,7 +5,7 @@ use super::ThulaniDep;
 pub fn files(name: &str, dep: &ThulaniDep) -> Vec<(PathBuf, String)> {
     vec![
         (PathBuf::from("Cargo.toml"), cargo_toml(name, dep)),
-        (PathBuf::from("fornfornthulani.toml"), THULANI_TOML.into()),
+        (PathBuf::from("fornthulani.toml"), FORNTHULANI_TOML.into()),
         (PathBuf::from(".gitignore"), GITIGNORE.into()),
         (PathBuf::from("README.md"), readme(name)),
         (PathBuf::from("src/main.rs"), MAIN.into()),
@@ -13,14 +13,10 @@ pub fn files(name: &str, dep: &ThulaniDep) -> Vec<(PathBuf, String)> {
         (PathBuf::from("src/config.rs"), CONFIG.into()),
         (PathBuf::from("src/routes/mod.rs"), ROUTES_MOD.into()),
         (PathBuf::from("src/routes/hello.rs"), ROUTES_HELLO.into()),
-        (
-            PathBuf::from("src/controllers/mod.rs"),
-            CONTROLLERS_MOD.into(),
-        ),
-        (
-            PathBuf::from("src/controllers/hello.rs"),
-            CONTROLLERS_HELLO.into(),
-        ),
+        (PathBuf::from("src/controllers/mod.rs"), CONTROLLERS_MOD.into()),
+        (PathBuf::from("src/controllers/hello.rs"), CONTROLLERS_HELLO.into()),
+        (PathBuf::from("src/services/mod.rs"), SERVICES_MOD.into()),
+        (PathBuf::from("src/services/hello_service.rs"), SERVICES_HELLO.into()),
         (PathBuf::from("src/plugins/mod.rs"), PLUGINS_MOD.into()),
     ]
 }
@@ -57,21 +53,50 @@ A fornthulani application.
     src/
       main.rs           entry point
       app.rs            wires routes into a Router
-      config.rs         reads fornfornthulani.toml
-      routes/           URL space (one file per group)
-      controllers/      request handlers (one file per endpoint)
+      config.rs         reads fornthulani.toml
+      routes/           URL space (one file per route group)
+      controllers/      request/response handlers (one file per endpoint)
+      services/         business logic (one file per domain concern)
       plugins/          your own middleware (implements fornthulani::Middleware)
+
+## The controller -> service pattern
+
+Controllers stay thin. They read the request, call a service, and
+return a response. Business logic lives in `services/`.
+
+    // controllers/users.rs
+    pub fn list(_: &Request, _: &Params) -> Result<Response, ThulaniError> {{
+        let users = services::users_service::list()?;
+        Ok(Response::json(Status::OK, &users))
+    }}
+
+    // services/users_service.rs
+    pub fn list() -> Result<Vec<User>, ThulaniError> {{
+        // load, filter, sort, cache, whatever
+        Ok(vec![])
+    }}
+
+Why:
+
+  - Controllers become easy to read (5 lines, no logic).
+  - Services are plain Rust - easy to unit test.
+  - Services can be reused by CLI tools, scheduled jobs, tests.
+
+This is a hint, not an obligation. Small controllers can stay small
+without a service. When a controller starts doing more than reading
+the request and calling something, move that work into a service.
 
 ## Generate more
 
     fornthulani generate route <name>       # add a route + controller
     fornthulani generate controller <name>  # add just a controller
+    fornthulani generate service <name>     # add a service
     fornthulani generate plugin <name>      # add a middleware in src/plugins/
 "#
     )
 }
 
-const THULANI_TOML: &str = r#"[server]
+const FORNTHULANI_TOML: &str = r#"[server]
 host = "127.0.0.1"
 port = 8080
 
@@ -86,6 +111,7 @@ mod config;
 mod controllers;
 mod plugins;
 mod routes;
+mod services;
 
 use fornthulani::Server;
 
@@ -162,7 +188,7 @@ impl Default for ResponseConfig {
 
 impl Config {
     pub fn load() -> std::io::Result<Self> {
-        let raw = match std::fs::read_to_string("fornfornthulani.toml") {
+        let raw = match std::fs::read_to_string("fornthulani.toml") {
             Ok(s) => s,
             Err(_) => return Ok(Self::default()),
         };
@@ -191,10 +217,44 @@ pub fn register(router: &mut Router) {
 
 const CONTROLLERS_MOD: &str = "pub mod hello;\n";
 
-const CONTROLLERS_HELLO: &str = r#"use fornthulani::{Params, Request, Response, ThulaniError, Status};
+const CONTROLLERS_HELLO: &str = r#"use fornthulani::{Params, Request, Response, Status, ThulaniError};
 
+use crate::services::hello_service;
+
+/// GET /hello
+///
+/// Notice how the controller just delegates to the service.
+/// Business logic lives in `services/hello_service.rs`.
 pub fn hello(_: &Request, _: &Params) -> Result<Response, ThulaniError> {
-    Ok(Response::text(Status::OK, "hello, fornthulani"))
+    let greeting = hello_service::greet("fornthulani");
+    Ok(Response::json(Status::OK, &greeting))
+}
+"#;
+
+const SERVICES_MOD: &str = "pub mod hello_service;\n";
+
+const SERVICES_HELLO: &str = r#"/// A service: plain Rust that holds business logic.
+///
+/// Services do not know about HTTP. They take data, return data.
+/// Controllers call services; services call databases, APIs, files, etc.
+///
+/// This is a hint, not an obligation. Small controllers can stay small
+/// without a service. When a controller starts doing more than reading
+/// the request and calling something, move that work into a service.
+
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct Greeting {
+    pub message: String,
+    pub from: String,
+}
+
+pub fn greet(name: &str) -> Greeting {
+    Greeting {
+        message: format!("hello, {name}"),
+        from: "fornthulani".into(),
+    }
 }
 "#;
 
