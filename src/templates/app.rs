@@ -219,6 +219,7 @@ const CONTROLLERS_MOD: &str = "pub mod hello;\n";
 
 const CONTROLLERS_HELLO: &str = r#"use fornthulani::{Params, Request, Response, Status, ThulaniError};
 
+use crate::config::Config;
 use crate::services::hello_service;
 
 /// GET /hello
@@ -226,7 +227,8 @@ use crate::services::hello_service;
 /// Notice how the controller just delegates to the service.
 /// Business logic lives in `services/hello_service.rs`.
 pub fn hello(_: &Request, _: &Params) -> Result<Response, ThulaniError> {
-    let greeting = hello_service::greet("fornthulani");
+    let cfg = Config::load().unwrap_or_default();
+    let greeting = hello_service::greet("fornthulani", &cfg.response.default_content_type);
     Ok(Response::json(Status::OK, &greeting))
 }
 "#;
@@ -248,12 +250,14 @@ use serde::Serialize;
 pub struct Greeting {
     pub message: String,
     pub from: String,
+    pub content_type: String,
 }
 
-pub fn greet(name: &str) -> Greeting {
+pub fn greet(name: &str, content_type: &str) -> Greeting {
     Greeting {
         message: format!("hello, {name}"),
         from: "fornthulani".into(),
+        content_type: content_type.into(),
     }
 }
 "#;
