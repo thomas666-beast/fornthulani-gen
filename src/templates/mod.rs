@@ -2,6 +2,7 @@ pub mod app;
 pub mod controller;
 pub mod plugin;
 pub mod route;
+pub mod service;
 
 /// How the generated project depends on `fornthulani`.
 pub enum ThulaniDep {

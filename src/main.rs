@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 mod templates;
 
-use templates::{ThulaniDep, app, controller, plugin, route};
+use templates::{app, controller, plugin, route, service, ThulaniDep};
 
 #[derive(Parser)]
 #[command(name = "fornthulani", version, about = "fornthulani project generator")]
@@ -25,26 +25,22 @@ enum Command {
 
 #[derive(Subcommand)]
 enum Generate {
-    /// Create a new fornthulani project
     App {
         name: String,
 
-        /// Reference a local fornthulani via path (default: `../fornthulani`)
         #[arg(long, conflicts_with = "fornthulani_version")]
         fornthulani_path: Option<String>,
 
-        /// Reference fornthulani by version (for when it's on crates.io)
         #[arg(long, conflicts_with = "fornthulani_path")]
         fornthulani_version: Option<String>,
     },
 
-    /// Add a route + matching controller
     Route { name: String },
 
-    /// Add a controller
     Controller { name: String },
 
-    /// Add a plugin (a fornthulani::Middleware)
+    Service { name: String },
+
     Plugin { name: String },
 }
 
@@ -68,6 +64,7 @@ fn main() -> Result<()> {
             Generate::Route { name } => generate_route(&name),
             Generate::Controller { name } => generate_controller(&name),
             Generate::Plugin { name } => generate_plugin(&name),
+            Generate::Service { name } => generate_service(&name),
         },
     }
 }
@@ -151,6 +148,21 @@ fn generate_plugin(name: &str) -> Result<()> {
         "      server = server.with_middleware({mod_name}::{});",
         pascal(&mod_name)
     );
+    Ok(())
+}
+
+// ---------- generate service ----------
+
+fn generate_service(name: &str) -> Result<()> {
+    let root = project_root()?;
+    let mod_name = sanitize_ident(name);
+    let rel = PathBuf::from("src/services").join(format!("{mod_name}.rs"));
+    if root.join(&rel).exists() {
+        bail!("service `{mod_name}` already exists");
+    }
+    write_file(&root, &rel, &service::file(&mod_name))?;
+    append_mod(&root.join("src/services/mod.rs"), &mod_name)?;
+    println!("added service {mod_name}");
     Ok(())
 }
 
