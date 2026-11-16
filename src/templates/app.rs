@@ -8,10 +8,7 @@ pub fn files(name: &str, dep: &ThulaniDep, orm: bool) -> Vec<(PathBuf, String)> 
         (PathBuf::from("fornthulani.toml"), fornthulani_toml(orm)),
         (PathBuf::from(".gitignore"), gitignore(orm)),
         (PathBuf::from("README.md"), readme(name, orm)),
-        (
-            PathBuf::from("src/main.rs"),
-            if orm { MAIN_ORM.into() } else { MAIN.into() },
-        ),
+        (PathBuf::from("src/main.rs"), main_rs(orm)),
         (PathBuf::from("src/app.rs"), APP.into()),
         (PathBuf::from("src/config.rs"), config_rs(orm)),
         (PathBuf::from("src/routes/mod.rs"), ROUTES_MOD.into()),
@@ -29,7 +26,14 @@ pub fn files(name: &str, dep: &ThulaniDep, orm: bool) -> Vec<(PathBuf, String)> 
             PathBuf::from("src/services/hello_service.rs"),
             SERVICES_HELLO.into(),
         ),
-        (PathBuf::from("src/plugins/mod.rs"), PLUGINS_MOD.into()),
+        (
+            PathBuf::from("src/plugins/mod.rs"),
+            PLUGINS_MOD_LOGGING.into(),
+        ),
+        (
+            PathBuf::from("src/plugins/logging.rs"),
+            PLUGINS_LOGGING.into(),
+        ),
     ];
     if orm {
         v.push((PathBuf::from("src/db.rs"), DB.into()));
@@ -45,6 +49,9 @@ pub fn files(name: &str, dep: &ThulaniDep, orm: bool) -> Vec<(PathBuf, String)> 
 
 fn cargo_toml(name: &str, dep: &ThulaniDep, orm: bool) -> String {
     let mut extra = String::new();
+    // Logging is always included.
+    extra.push_str(&dep.plugin_line("fornthulani-plugin-log", "0.1", &[]));
+    extra.push('\n');
     if orm {
         extra.push_str(&dep.plugin_line("fornthulani-plugin-orm", "0.1", &["validation"]));
         extra.push('\n');
@@ -65,7 +72,7 @@ toml = "0.8"
 
 [profile.release]
 overflow-checks = true
-panic = "unwind"   # a panicking handler becomes a 500, not a dead server
+panic = "unwind"
 "##,
         &[
             ("NAME", name),
@@ -76,7 +83,7 @@ panic = "unwind"   # a panicking handler becomes a 500, not a dead server
 }
 
 fn gitignore(orm: bool) -> String {
-    let mut s = String::from("/target\n");
+    let mut s = String::from("/target\n/storage/logs/*.log\n");
     if orm {
         s.push_str("*.db\n*.db-wal\n*.db-shm\n");
     }
@@ -88,18 +95,27 @@ fn fornthulani_toml(orm: bool) -> String {
         r#"[server]
 host = "127.0.0.1"
 port = 8080
-# Production mode: JSON-only errors, API security headers. Also settable
-# with APP_ENV=production. Run behind a TLS-terminating reverse proxy.
 production = false
-# Largest accepted request body, in bytes.
 max_body_bytes = 1048576
+
+[logging]
+# app.log has every line. Channels write to their own file AND to app.log.
+app_log = "storage/logs/app.log"
+to_stdout = true
+
+# Add channels here. Each `[[logging.channels]]` block becomes a channel:
+#   channel!("auth").info(format!("user {} logged in", id));
+# writes to storage/logs/auth.log AND to app.log with an [auth] prefix.
+[[logging.channels]]
+name = "auth"
+path = "storage/logs/auth.log"
+mirror_to_app = true
 "#,
     );
     if orm {
         s.push_str(
             r#"
 [database]
-# Also settable with DATABASE_PATH.
 path = "app.db"
 "#,
         );
@@ -108,10 +124,10 @@ path = "app.db"
 }
 
 fn config_rs(orm: bool) -> String {
-    let (db_struct, db_field, db_default, db_env) = if orm {
+    let (db_struct, db_field, db_default) = if orm {
         (
             r#"
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, serde::Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
     pub path: String,
@@ -125,23 +141,20 @@ impl Default for DatabaseConfig {
 "#,
             "    pub database: DatabaseConfig,\n",
             "            database: DatabaseConfig::default(),\n",
-            r#"        if let Ok(v) = std::env::var("DATABASE_PATH") {
-            self.database.path = v;
-        }
-"#,
         )
     } else {
-        ("", "", "", "")
+        ("", "", "")
     };
 
     render(
         r##"use serde::Deserialize;
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Debug, Clone, Default, Deserialize)]
 #[serde(default)]
 pub struct Config {
     pub server: ServerSection,
+    pub logging: LoggingConfig,
 __DB_FIELD__}
 
 #[derive(Debug, Clone, Deserialize)]
@@ -152,15 +165,37 @@ pub struct ServerSection {
     pub production: bool,
     pub max_body_bytes: usize,
 }
-__DB_STRUCT__
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            server: ServerSection::default(),
-__DB_DEFAULT__        }
-    }
+
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default)]
+pub struct LoggingConfig {
+    pub app_log: String,
+    pub to_stdout: bool,
+    pub channels: Vec<LoggingChannel>,
 }
 
+#[derive(Debug, Clone, Deserialize)]
+pub struct LoggingChannel {
+    pub name: String,
+    pub path: String,
+    #[serde(default = "default_mirror")]
+    pub mirror_to_app: bool,
+}
+
+fn default_mirror() -> bool {
+    true
+}
+
+impl Default for LoggingConfig {
+    fn default() -> Self {
+        Self {
+            app_log: "storage/logs/app.log".into(),
+            to_stdout: true,
+            channels: Vec::new(),
+        }
+    }
+}
+__DB_STRUCT__
 impl Default for ServerSection {
     fn default() -> Self {
         Self {
@@ -173,8 +208,6 @@ impl Default for ServerSection {
 }
 
 impl Config {
-    /// `fornthulani.toml` (optional) + environment overrides:
-    /// `APP_ENV`, `HOST`, `PORT`, `DATABASE_PATH`.
     pub fn load() -> Result<Self, String> {
         let mut cfg = match std::fs::read_to_string("fornthulani.toml") {
             Ok(raw) => toml::from_str(&raw).map_err(|e| e.to_string())?,
@@ -195,11 +228,12 @@ impl Config {
         if let Some(p) = std::env::var("PORT").ok().and_then(|p| p.parse().ok()) {
             self.server.port = p;
         }
-__DB_ENV__    }
+        if let Ok(v) = std::env::var("LOGGING_APP_LOG") {
+            self.logging.app_log = v;
+        }
+    }
 }
 
-/// The configuration, loaded once. A broken config file stops the program
-/// at startup instead of silently falling back to development defaults.
 pub fn get() -> &'static Config {
     static CONFIG: OnceLock<Config> = OnceLock::new();
     CONFIG.get_or_init(|| match Config::load() {
@@ -215,9 +249,12 @@ pub fn get() -> &'static Config {
             ("DB_FIELD", db_field),
             ("DB_STRUCT", db_struct),
             ("DB_DEFAULT", db_default),
-            ("DB_ENV", db_env),
         ],
     )
+}
+
+fn main_rs(orm: bool) -> String {
+    if orm { MAIN_ORM.into() } else { MAIN.into() }
 }
 
 fn readme(name: &str, orm: bool) -> String {
@@ -233,20 +270,8 @@ fn readme(name: &str, orm: bool) -> String {
     cargo run -- migrate
     cargo run
 
-`generate resource` creates the model, migration, validation request,
-CRUD controller and routes in one go. Pieces on their own:
-
-    fornthulani generate model Post title:string body:text?
-    fornthulani generate request Post title:string body:text?
-    fornthulani generate migration add_index_to_posts
-
 Field types: `string`, `text`, `integer`, `float`, `bool`, `email`;
 add `?` for nullable (`body:text?`).
-
-Security defaults you get for free: every value is a bound parameter,
-table/column names are validated, models have a mass-assignment allow-list
-(`FILLABLE`), `HIDDEN` columns never reach clients, bulk `update`/`delete`
-without a condition is refused, and `paginate` caps `per_page` at 100.
 "#
     } else {
         ""
@@ -259,58 +284,49 @@ A fornthulani application.
 
 ## Run
 
-    cargo run                      # development
+    cargo run
     APP_ENV=production cargo run --release
-
-Production mode answers every error as JSON and adds API security
-headers. fornthulani speaks plain HTTP: put it behind a TLS-terminating
-reverse proxy (nginx, Caddy, a cloud load balancer) and bind it to a
-private address.
-
-Configuration lives in `fornthulani.toml`; `APP_ENV`, `HOST`, `PORT`
-(and `DATABASE_PATH`) override it.
 
 ## Layout
 
     src/
       main.rs           entry point
       app.rs            wires routes into a Router
-      config.rs         fornthulani.toml + environment
-      routes/           URL space (one file per route group)
+      config.rs         reads fornthulani.toml
+      routes/           URL space
       controllers/      request/response handlers
       services/         business logic
-      plugins/          your own middleware
-__LAYOUT_ORM__
-## Validation
+      plugins/          middleware (logging is wired in by default)
+      plugins/logging.rs  HTTP request logging + channel logging
 
-    use fornthulani_plugin_validate::ValidateExt;
+## Logging
 
-    let data = req.validate([
-        ("email", "required|email|max:255"),
-        ("age",   "nullable|integer|between:18,120"),
-    ])?;            // failure -> 422 {"message": ..., "errors": {...}}
+Already configured. Every request is logged to `storage/logs/app.log`.
 
-## Generate more
+To log from anywhere in the project:
 
-    fornthulani generate route <name>       # add a route + controller
-    fornthulani generate controller <name>  # add just a controller
-    fornthulani generate service <name>     # add a service
-    fornthulani generate plugin <name>      # add a middleware in src/plugins/
+    use fornthulani_plugin_log::{info, warn, channel};
+
+    info!("server started");
+    channel!("auth").info("user logged in");
+
+**Add a channel** — edit `fornthulani.toml`:
+
+    [[logging.channels]]
+    name = "db"
+    path = "storage/logs/db.log"
+    mirror_to_app = true
+
+Then `channel!("db").info(...)` writes to `storage/logs/db.log` AND
+`storage/logs/app.log` (with a `[db]` prefix).
 __ORM__"##,
-        &[
-            ("NAME", name),
-            (
-                "LAYOUT_ORM",
-                if orm {
-                    "      models/           database models\n      requests/         validation rules (form requests)\n      migrations/       schema changes\n      db.rs             connection + migration commands\n"
-                } else {
-                    ""
-                },
-            ),
-            ("ORM", orm_section),
-        ],
+        &[("NAME", name), ("ORM", orm_section)],
     )
 }
+
+// ---------------------------------------------------------------------
+// templates
+// ---------------------------------------------------------------------
 
 const MAIN: &str = r##"mod app;
 mod config;
@@ -331,7 +347,9 @@ fn main() -> std::io::Result<()> {
     }
     .max_body_bytes(cfg.server.max_body_bytes);
 
-    let server = Server::with_config(app::build_router(), server_cfg);
+    let server = Server::with_config(app::build_router(), server_cfg)
+        .with_app_config(cfg.clone());
+
     let server = plugins::register(server);
 
     let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
@@ -361,7 +379,6 @@ fn fail(e: impl std::fmt::Display) -> std::io::Error {
 fn main() -> std::io::Result<()> {
     let cfg = config::get();
 
-    // `cargo run -- migrate` etc.
     let command = std::env::args().nth(1);
     db::connect(&cfg.database.path).map_err(fail)?;
     match command.as_deref() {
@@ -383,7 +400,9 @@ fn main() -> std::io::Result<()> {
     }
     .max_body_bytes(cfg.server.max_body_bytes);
 
-    let server = Server::with_config(app::build_router(), server_cfg);
+    let server = Server::with_config(app::build_router(), server_cfg)
+        .with_app_config(cfg.clone());
+
     let server = plugins::register(server);
 
     let addr = format!("{}:{}", cfg.server.host, cfg.server.port);
@@ -393,13 +412,136 @@ fn main() -> std::io::Result<()> {
 }
 "##;
 
+const APP: &str = r##"use fornthulani::Router;
+
+use crate::routes;
+
+pub fn build_router() -> Router {
+    let mut router = Router::new();
+    routes::register(&mut router);
+    router
+}
+"##;
+
+const ROUTES_MOD: &str = r##"pub mod hello;
+
+use fornthulani::Router;
+
+pub fn register(router: &mut Router) {
+    hello::register(router);
+}
+"##;
+
+const ROUTES_HELLO: &str = r##"use fornthulani::Router;
+
+use crate::controllers::hello;
+
+pub fn register(router: &mut Router) {
+    router.get("/hello", hello::hello).name("hello");
+}
+"##;
+
+const CONTROLLERS_MOD: &str = "pub mod hello;\n";
+
+const CONTROLLERS_HELLO: &str = r##"use fornthulani::{Params, Request, Response, Status, ThulaniError};
+
+use crate::services::hello_service;
+
+pub fn hello(_: &Request, _: &Params) -> Result<Response, ThulaniError> {
+    let greeting = hello_service::greet("fornthulani");
+    Ok(Response::json(Status::OK, &greeting))
+}
+"##;
+
+const SERVICES_MOD: &str = "pub mod hello_service;\n";
+
+const SERVICES_HELLO: &str = r##"//! A service: plain Rust that holds business logic.
+
+use serde::Serialize;
+
+#[derive(Serialize)]
+pub struct Greeting {
+    pub message: String,
+    pub from: String,
+}
+
+pub fn greet(name: &str) -> Greeting {
+    Greeting {
+        message: format!("hello, {name}"),
+        from: "fornthulani".into(),
+    }
+}
+"##;
+
+const PLUGINS_MOD_LOGGING: &str = r##"pub mod logging;
+
+use fornthulani::Server;
+
+pub fn register(server: Server) -> Server {
+    logging::init_from_server(&server);
+    server.with_middleware(logging::middleware())
+}
+"##;
+
+const PLUGINS_LOGGING: &str = r##"//! Logging: HTTP request logging + channel logging.
+//!
+//! Wired in by the generator. Reads `[logging]` from fornthulani.toml.
+//!
+//! To add a channel, edit fornthulani.toml:
+//!
+//!     [[logging.channels]]
+//!     name = "auth"
+//!     path = "storage/logs/auth.log"
+//!     mirror_to_app = true
+//!
+//! Then log with:
+//!
+//!     use fornthulani_plugin_log::channel;
+//!     channel!("auth").info("user logged in");
+
+use fornthulani::Server;
+
+pub fn init_from_server(server: &Server) {
+    let cfg = match server.app_config::<crate::config::Config>() {
+        Some(c) => c,
+        None => {
+            eprintln!("[logging] no app config on server");
+            return;
+        }
+    };
+
+    if let Err(e) =
+        fornthulani_plugin_log::init_both(cfg.logging.app_log.as_str(), cfg.logging.to_stdout)
+    {
+        eprintln!("[logging] cannot open `{}`: {e}", cfg.logging.app_log);
+        return;
+    }
+
+    for ch in &cfg.logging.channels {
+        match fornthulani_plugin_log::add_channel(ch.name.clone(), ch.path.as_str()) {
+            Ok(b) => {
+                b.mirror_to_app(ch.mirror_to_app);
+            }
+            Err(e) => {
+                eprintln!(
+                    "[logging] cannot open channel `{}` at `{}`: {e}",
+                    ch.name, ch.path
+                );
+            }
+        }
+    }
+}
+
+pub fn middleware() -> fornthulani_plugin_log::Log {
+    fornthulani_plugin_log::Log::new()
+}
+"##;
+
 const DB: &str = r##"use crate::migrations;
 use fornthulani_plugin_orm::{Db, Migrator, OrmResult, SqliteConnection};
 
-/// Open the database and make it the connection every model uses.
 pub fn connect(path: &str) -> OrmResult<()> {
     Db::set(SqliteConnection::open(path)?);
-    // Enables the `unique:` and `exists:` validation rules.
     fornthulani_plugin_orm::register_validation_rules();
     Ok(())
 }
@@ -441,95 +583,10 @@ const MIGRATIONS_MOD: &str = r##"use fornthulani_plugin_orm::Migration;
 
 // fornthulani:migration-mods
 
-/// Every migration. They run sorted by name; `generate migration` and
-/// `generate model` register themselves here.
 pub fn all() -> Vec<Migration> {
     vec![
         // fornthulani:migration-list
     ]
-}
-"##;
-
-const APP: &str = r##"use fornthulani::Router;
-
-use crate::routes;
-
-pub fn build_router() -> Router {
-    let mut router = Router::new();
-    routes::register(&mut router);
-    router
-}
-"##;
-
-const ROUTES_MOD: &str = r##"pub mod hello;
-
-use fornthulani::Router;
-
-pub fn register(router: &mut Router) {
-    hello::register(router);
-}
-"##;
-
-const ROUTES_HELLO: &str = r##"use fornthulani::Router;
-
-use crate::controllers::hello;
-
-pub fn register(router: &mut Router) {
-    router.get("/hello", hello::hello).name("hello");
-}
-"##;
-
-const CONTROLLERS_MOD: &str = "pub mod hello;\n";
-
-const CONTROLLERS_HELLO: &str = r##"use fornthulani::{Params, Request, Response, Status, ThulaniError};
-
-use crate::services::hello_service;
-
-/// GET /hello
-///
-/// The controller just delegates to the service.
-/// Business logic lives in `services/hello_service.rs`.
-pub fn hello(_: &Request, _: &Params) -> Result<Response, ThulaniError> {
-    let greeting = hello_service::greet("fornthulani");
-    Ok(Response::json(Status::OK, &greeting))
-}
-"##;
-
-const SERVICES_MOD: &str = "pub mod hello_service;\n";
-
-const SERVICES_HELLO: &str = r##"//! A service: plain Rust that holds business logic.
-//!
-//! Services do not know about HTTP. They take data, return data.
-//! Controllers call services; services call databases, APIs, files, etc.
-//!
-//! This is a hint, not an obligation. Small controllers can stay small
-//! without a service.
-
-use serde::Serialize;
-
-#[derive(Serialize)]
-pub struct Greeting {
-    pub message: String,
-    pub from: String,
-}
-
-pub fn greet(name: &str) -> Greeting {
-    Greeting {
-        message: format!("hello, {name}"),
-        from: "fornthulani".into(),
-    }
-}
-"##;
-
-const PLUGINS_MOD: &str = r##"use fornthulani::Server;
-
-/// Register all project plugins against the server.
-///
-/// Generated plugins print the line to add here:
-///
-///     server = server.with_middleware(my_plugin::MyPlugin);
-pub fn register(server: Server) -> Server {
-    server
 }
 "##;
 
@@ -542,33 +599,76 @@ mod tests {
     }
 
     #[test]
-    fn plain_app_has_no_orm_bits() {
+    fn plain_app_has_logging_but_no_orm() {
         let f = files("demo", &dep(), false);
         let names: Vec<String> = f.iter().map(|(p, _)| p.display().to_string()).collect();
-        assert!(
-            !names
-                .iter()
-                .any(|n| n.contains("db.rs") || n.contains("models"))
-        );
+        assert!(names.iter().any(|n| n.contains("plugins/logging.rs")));
+        assert!(names.iter().any(|n| n.contains("plugins/mod.rs")));
+        assert!(!names.iter().any(|n| n.contains("db.rs")));
+        assert!(!names.iter().any(|n| n.contains("models")));
+    }
+
+    #[test]
+    fn cargo_toml_has_log_plugin_always() {
+        let f = files("demo", &dep(), false);
         let cargo = &f.iter().find(|(p, _)| p.ends_with("Cargo.toml")).unwrap().1;
-        assert!(cargo.contains("edition = \"2024\""));
-        assert!(!cargo.contains("orm"));
+        assert!(cargo.contains("fornthulani-plugin-log"));
+    }
+
+    #[test]
+    fn toml_has_logging_section() {
+        let f = files("demo", &dep(), false);
+        let toml = &f
+            .iter()
+            .find(|(p, _)| p.ends_with("fornthulani.toml"))
+            .unwrap()
+            .1;
+        assert!(toml.contains("[logging]"));
+        assert!(toml.contains("app_log"));
+        assert!(toml.contains("[[logging.channels]]"));
+        assert!(toml.contains("name = \"auth\""));
+    }
+
+    #[test]
+    fn config_has_logging_struct() {
+        let f = files("demo", &dep(), false);
         let cfg = &f.iter().find(|(p, _)| p.ends_with("config.rs")).unwrap().1;
-        assert!(!cfg.contains("DatabaseConfig"));
+        assert!(cfg.contains("pub struct LoggingConfig"));
+        assert!(cfg.contains("pub struct LoggingChannel"));
+        assert!(cfg.contains("pub logging: LoggingConfig"));
         assert!(!cfg.contains("__"));
     }
 
     #[test]
-    fn orm_app_has_db_and_markers() {
-        let f = files("demo", &dep(), true);
-        let get = |suffix: &str| &f.iter().find(|(p, _)| p.ends_with(suffix)).unwrap().1;
-        assert!(get("Cargo.toml").contains("fornthulani-plugin-orm = { path = \"../fornthulani-plugin-orm\", features = [\"validation\"] }"));
-        assert!(get("migrations/mod.rs").contains("// fornthulani:migration-mods"));
-        assert!(get("migrations/mod.rs").contains("// fornthulani:migration-list"));
-        assert!(get("config.rs").contains("DatabaseConfig"));
-        assert!(get("config.rs").contains("DATABASE_PATH"));
-        assert!(!get("config.rs").contains("__"));
-        assert!(get("fornthulani.toml").contains("[database]"));
-        assert!(get("main.rs").contains("migrate:rollback"));
+    fn main_attaches_app_config() {
+        let f = files("demo", &dep(), false);
+        let main = &f.iter().find(|(p, _)| p.ends_with("main.rs")).unwrap().1;
+        assert!(main.contains(".with_app_config(cfg.clone())"));
+        assert!(main.contains("plugins::register(server)"));
+    }
+
+    #[test]
+    fn plugins_mod_calls_init_and_middleware() {
+        let f = files("demo", &dep(), false);
+        let pm = &f
+            .iter()
+            .find(|(p, _)| p.ends_with("plugins/mod.rs"))
+            .unwrap()
+            .1;
+        assert!(pm.contains("logging::init_from_server(&server)"));
+        assert!(pm.contains("server.with_middleware(logging::middleware())"));
+    }
+
+    #[test]
+    fn plugins_logging_matches_demo() {
+        let f = files("demo", &dep(), false);
+        let pl = &f
+            .iter()
+            .find(|(p, _)| p.ends_with("plugins/logging.rs"))
+            .unwrap()
+            .1;
+        assert!(pl.contains("fornthulani_plugin_log::init_both"));
+        assert!(pl.contains("fornthulani_plugin_log::add_channel"));
+        assert!(pl.contains("fornthulani_plugin_log::Log::new"));
     }
 }
