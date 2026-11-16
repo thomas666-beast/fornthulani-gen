@@ -1,3 +1,5 @@
+use crate::names::pascal;
+
 pub fn file(name: &str) -> String {
     let pascal = pascal(name);
     format!(
@@ -6,28 +8,17 @@ pub fn file(name: &str) -> String {
 pub struct {pascal};
 
 impl Middleware for {pascal} {{
-    fn before(&self, _req: &mut Request) -> Result<(), ThulaniError> {{
-        // inspect or mutate the request here
-        Ok(())
+    /// Runs before the controller.
+    ///   Ok(None)        -> continue
+    ///   Ok(Some(resp))  -> stop here and send `resp`
+    ///   Err(e)          -> reject the request
+    fn before(&self, _req: &mut Request) -> Result<Option<Response>, ThulaniError> {{
+        Ok(None)
     }}
 
-    fn after(&self, _resp: &mut Response) {{
-        // inspect or mutate the response here
-    }}
+    /// Runs after the controller, in reverse registration order.
+    fn after(&self, _req: &Request, _resp: &mut Response) {{}}
 }}
 "#
     )
-}
-
-fn pascal(s: &str) -> String {
-    s.split(['_', '-'])
-        .filter(|p| !p.is_empty())
-        .map(|p| {
-            let mut c = p.chars();
-            match c.next() {
-                Some(f) => f.to_ascii_uppercase().to_string() + c.as_str(),
-                None => String::new(),
-            }
-        })
-        .collect()
 }

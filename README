@@ -36,7 +36,37 @@ COMMANDS
   fornthulani generate app <name>              create a new project
   fornthulani generate route <name>            add a route + controller
   fornthulani generate controller <name>       add only a controller
+  fornthulani generate service <name>          add a service
   fornthulani generate plugin <name>           add a Middleware plugin
+
+With the ORM (create the app with `--orm`):
+
+  fornthulani generate app <name> --orm        project with SQLite, models,
+                                               migrations and validation
+  fornthulani generate resource <Name> <fields...>
+                                               model + migration + validation
+                                               + CRUD controller + routes
+  fornthulani generate model <Name> <fields...>   model + migration
+  fornthulani generate request <Name> <fields...> Store/Update form requests
+  fornthulani generate migration <name>        empty migration
+
+Fields are `name:type`, or `name:type?` for nullable. Types: string, text,
+integer, float, bool, email (default: string).
+
+  fornthulani generate app blog --orm --fornthulani-path ../fornthulani
+  cd blog
+  fornthulani generate resource Post title:string body:text? published:bool
+  cargo run -- migrate
+  cargo run
+  # GET/POST /posts, GET/PUT/PATCH/DELETE /posts/:id
+
+The generated controller paginates (capped), sorts only by an allow-list,
+validates input with the generated rules, and hides nothing it should not.
+Add `HIDDEN` columns to the model for secrets.
+
+Generated projects read `fornthulani.toml` once at startup (a broken file
+stops the program), accept APP_ENV / HOST / PORT / DATABASE_PATH overrides,
+and run `APP_ENV=production` in the hardened JSON-only API mode.
 
 All `route`, `controller`, and `plugin` commands look for the nearest
 `Cargo.toml` with a `src/main.rs` file — so you run them from inside
@@ -108,7 +138,7 @@ Examples:
   fornthulani generate app my-app --fornthulani-path ../fornthulani
 
   # after fornthulani is published
-  fornthulani generate app my-app --fornthulani-version 0.1.0
+  fornthulani generate app my-app --fornthulani-version 0.2.0
 
 The two flags are mutually exclusive. If neither is given, `--fornthulani-path ../fornthulani`
 is used.
