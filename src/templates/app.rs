@@ -17,31 +17,97 @@ pub fn files(
             PathBuf::from("fornthulani.toml"),
             fornthulani_toml(orm, jwt_secret, csrf_secret, api_key),
         ),
-        (PathBuf::from("README.md"), readme(name)),
-        (PathBuf::from("curl.sh"), CURL_SH.to_string()),
-        (PathBuf::from("src/main.rs"), if orm { MAIN_ORM } else { MAIN }.to_string()),
-        (PathBuf::from("src/app.rs"), if orm { APP_ORM } else { APP_PLAIN }.to_string()),
-        (PathBuf::from("src/config.rs"), if orm { CONFIG_ORM } else { CONFIG_PLAIN }.to_string()),
-        (PathBuf::from("src/routes/mod.rs"), if orm { ROUTES_MOD_ORM } else { ROUTES_MOD_PLAIN }.to_string()),
-        (PathBuf::from("src/routes/hello.rs"), ROUTES_HELLO.to_string()),
-        (PathBuf::from("src/controllers/mod.rs"), if orm { "pub mod auth;\npub mod hello;\n" } else { "pub mod hello;\n" }.to_string()),
-        (PathBuf::from("src/controllers/hello.rs"), CONTROLLERS_HELLO.to_string()),
-        (PathBuf::from("src/services/mod.rs"), "pub mod hello_service;\n".to_string()),
-        (PathBuf::from("src/services/hello_service.rs"), SERVICES_HELLO.to_string()),
-        (PathBuf::from("src/plugins/mod.rs"), if orm { PLUGINS_MOD_ORM } else { PLUGINS_MOD_PLAIN }.to_string()),
-        (PathBuf::from("src/plugins/logging.rs"), PLUGINS_LOGGING.to_string()),
+        (PathBuf::from("README.md"), readme(name, orm)),
+        (PathBuf::from("curl.sh"), curl_sh(orm)),
+        (
+            PathBuf::from("src/main.rs"),
+            if orm { MAIN_ORM } else { MAIN }.to_string(),
+        ),
+        (
+            PathBuf::from("src/app.rs"),
+            if orm { APP_ORM } else { APP_PLAIN }.to_string(),
+        ),
+        (
+            PathBuf::from("src/config.rs"),
+            if orm { CONFIG_ORM } else { CONFIG_PLAIN }.to_string(),
+        ),
+        (
+            PathBuf::from("src/routes/mod.rs"),
+            if orm {
+                ROUTES_MOD_ORM
+            } else {
+                ROUTES_MOD_PLAIN
+            }
+            .to_string(),
+        ),
+        (
+            PathBuf::from("src/routes/hello.rs"),
+            ROUTES_HELLO.to_string(),
+        ),
+        (
+            PathBuf::from("src/controllers/mod.rs"),
+            if orm {
+                "pub mod auth;\npub mod hello;\n"
+            } else {
+                "pub mod hello;\n"
+            }
+            .to_string(),
+        ),
+        (
+            PathBuf::from("src/controllers/hello.rs"),
+            CONTROLLERS_HELLO.to_string(),
+        ),
+        (
+            PathBuf::from("src/services/mod.rs"),
+            "pub mod hello_service;\n".to_string(),
+        ),
+        (
+            PathBuf::from("src/services/hello_service.rs"),
+            SERVICES_HELLO.to_string(),
+        ),
+        (
+            PathBuf::from("src/plugins/mod.rs"),
+            if orm {
+                PLUGINS_MOD_ORM
+            } else {
+                PLUGINS_MOD_PLAIN
+            }
+            .to_string(),
+        ),
+        (
+            PathBuf::from("src/plugins/logging.rs"),
+            PLUGINS_LOGGING.to_string(),
+        ),
     ];
 
     if orm {
-        v.push((PathBuf::from("src/plugins/auth.rs"), PLUGINS_AUTH.to_string()));
-        v.push((PathBuf::from("src/controllers/auth.rs"), CONTROLLERS_AUTH.to_string()));
+        v.push((
+            PathBuf::from("src/plugins/auth.rs"),
+            PLUGINS_AUTH.to_string(),
+        ));
+        v.push((
+            PathBuf::from("src/controllers/auth.rs"),
+            CONTROLLERS_AUTH.to_string(),
+        ));
         v.push((PathBuf::from("src/routes/auth.rs"), ROUTES_AUTH.to_string()));
-        v.push((PathBuf::from("src/requests/mod.rs"), "pub mod login;\n".to_string()));
-        v.push((PathBuf::from("src/requests/login.rs"), REQUESTS_LOGIN.to_string()));
-        v.push((PathBuf::from("src/models/mod.rs"), "pub mod user;\n".to_string()));
+        v.push((
+            PathBuf::from("src/requests/mod.rs"),
+            "pub mod login;\n".to_string(),
+        ));
+        v.push((
+            PathBuf::from("src/requests/login.rs"),
+            REQUESTS_LOGIN.to_string(),
+        ));
+        v.push((
+            PathBuf::from("src/models/mod.rs"),
+            "pub mod user;\n".to_string(),
+        ));
         v.push((PathBuf::from("src/models/user.rs"), MODELS_USER.to_string()));
         v.push((PathBuf::from("src/db.rs"), DB.to_string()));
-        v.push((PathBuf::from("src/migrations/mod.rs"), MIGRATIONS_MOD.to_string()));
+        v.push((
+            PathBuf::from("src/migrations/mod.rs"),
+            MIGRATIONS_MOD.to_string(),
+        ));
         v.push((
             PathBuf::from("src/migrations/m20260101000001_create_users_table.rs"),
             MIGRATION_CREATE_USERS.to_string(),
@@ -63,7 +129,11 @@ fn cargo_toml(name: &str, dep: &ThulaniDep, orm: bool) -> String {
     extra.push_str(&dep.plugin_line("fornthulani-plugin-json-body", "0.1", &[]));
     extra.push('\n');
     if orm {
-        extra.push_str(&dep.plugin_line("fornthulani-plugin-orm", "0.2", &["sqlite", "validation"]));
+        extra.push_str(&dep.plugin_line(
+            "fornthulani-plugin-orm",
+            "0.2",
+            &["sqlite", "postgres", "validation"],
+        ));
         extra.push('\n');
         extra.push_str(&dep.plugin_line("fornthulani-plugin-validate", "0.2", &[]));
         extra.push('\n');
@@ -129,7 +199,12 @@ mirror_to_app = true
         s.push_str(&format!(
             r#"
 [database]
-path = "app.db"
+# "sqlite" or "postgres"
+driver = "sqlite"
+
+# SQLite: a file path. Postgres: a connection URL
+# (postgres://user:pass@host:5432/db).
+url = "app.db"
 
 [auth]
 jwt_secret = "{jwt}"
@@ -146,21 +221,9 @@ login_rate_per_minute = 5
     s
 }
 
-fn readme(name: &str) -> String {
-    render(
-        r#"# __NAME__
-
-A fornthulani application.
-
-## Run
-
-    cargo run -- migrate
-    cargo run
-
-Then in another terminal:
-
-    ./curl.sh
-
+fn readme(name: &str, orm: bool) -> String {
+    let auth_section = if orm {
+        r#"
 ## Auth
 
 Demo user (created by the seed migration):
@@ -175,6 +238,34 @@ Demo user (created by the seed migration):
     curl http://127.0.0.1:8080/me \
          -H "Authorization: Bearer <token>"
 
+## Database
+
+SQLite by default. To switch to PostgreSQL, edit `fornthulani.toml`:
+
+    [database]
+    driver = "postgres"
+    url = "postgres://user:pass@host:5432/db"
+
+Then `cargo run -- migrate`. Nothing else changes.
+"#
+    } else {
+        ""
+    };
+
+    render(
+        r#"# __NAME__
+
+A fornthulani application.
+
+## Run
+
+    cargo run -- migrate
+    cargo run
+
+Then in another terminal:
+
+    ./curl.sh
+
 ## Logging
 
 Logs go to `storage/logs/app.log`. Add channels in `fornthulani.toml`:
@@ -183,8 +274,82 @@ Logs go to `storage/logs/app.log`. Add channels in `fornthulani.toml`:
     name = "db"
     path = "storage/logs/db.log"
     mirror_to_app = true
+__AUTH__"#,
+        &[("NAME", name), ("AUTH", auth_section)],
+    )
+}
+
+fn curl_sh(orm: bool) -> String {
+    let me_body_check = if orm {
+        r#"
+echo "== Timestamps =="
+ME=$(curl -s "$BASE/me" -H "Authorization: Bearer $TOKEN")
+CREATED=$(echo "$ME" | jget "['created_at']")
+[[ -n "$CREATED" ]] && ok "created_at populated" || no "created_at empty"
+"#
+    } else {
+        ""
+    };
+
+    let auth_checks = if orm {
+        r#"
+echo "== Login =="
+S=$(status -X POST "$BASE/login" -H 'content-type: application/json' -d '{"email":"wrong@x.io","password":"xxxxxxxx"}')
+[[ "$S" == "401" ]] && ok "POST /login (bad creds)" || no "POST /login bad ($S)"
+
+LOGIN=$(curl -s -X POST "$BASE/login" -H 'content-type: application/json' \
+  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
+TOKEN=$(echo "$LOGIN" | jget "['token']")
+[[ -n "$TOKEN" ]] && ok "POST /login (good creds)" || no "POST /login good"
+
+echo "== Me =="
+S=$(status "$BASE/me"); [[ "$S" == "401" ]] && ok "GET /me (no token)" || no "GET /me no token ($S)"
+S=$(status "$BASE/me" -H "Authorization: Bearer $TOKEN")
+[[ "$S" == "200" ]] && ok "GET /me (with token)" || no "GET /me with token ($S)"
+"#
+    } else {
+        ""
+    };
+
+    let logging_checks = if orm {
+        r#"
+echo "== Logging =="
+[[ -f storage/logs/app.log ]] && ok "app.log exists" || no "app.log missing"
+[[ -f storage/logs/auth.log ]] && ok "auth.log exists" || no "auth.log missing"
+"#
+    } else {
+        r#"
+echo "== Logging =="
+[[ -f storage/logs/app.log ]] && ok "app.log exists" || no "app.log missing"
+"#
+    };
+
+    render(
+        r#"#!/usr/bin/env bash
+set -euo pipefail
+BASE="${BASE:-http://127.0.0.1:8080}"
+EMAIL="${EMAIL:-demo@example.com}"
+PASSWORD="${PASSWORD:-hunter2hunter2}"
+
+PASS=0
+FAIL=0
+ok() { echo "  ok $1"; PASS=$((PASS+1)); }
+no() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
+status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
+jget() { python3 -c "import sys,json;print(json.load(sys.stdin)$1)" 2>/dev/null || echo ""; }
+
+echo "== Hello =="
+S=$(status "$BASE/hello"); [[ "$S" == "200" ]] && ok "GET /hello" || no "GET /hello ($S)"
+__AUTH_CHECKS____TIMESTAMPS____LOGGING__
+echo
+echo "Passed: $PASS  Failed: $FAIL"
+[[ $FAIL -eq 0 ]] || exit 1
 "#,
-        &[("NAME", name)],
+        &[
+            ("AUTH_CHECKS", auth_checks),
+            ("TIMESTAMPS", me_body_check),
+            ("LOGGING", logging_checks),
+        ],
     )
 }
 
@@ -240,7 +405,7 @@ fn main() -> std::io::Result<()> {
     let cfg = config::get();
 
     let command = std::env::args().nth(1);
-    db::connect(&cfg.database.path).map_err(fail)?;
+    db::connect(cfg).map_err(fail)?;
     match command.as_deref() {
         None | Some("serve") => {}
         Some("migrate") => return db::migrate().map_err(fail),
@@ -538,11 +703,30 @@ pub fn init_from_server(server: Server, jwt: Jwt) -> Server {
 }
 "#;
 
-const DB: &str = r#"use crate::migrations;
-use fornthulani_plugin_orm::{Db, Migrator, OrmResult, SqliteConnection};
+const DB: &str = r#"use crate::config::Config;
+use crate::migrations;
+use fornthulani_plugin_orm::{Db, Migrator, OrmError, OrmResult, PgConnection, SqliteConnection};
 
-pub fn connect(path: &str) -> OrmResult<()> {
-    Db::set(SqliteConnection::open(path)?);
+pub fn connect(cfg: &Config) -> OrmResult<()> {
+    match cfg.database.driver.as_str() {
+        "sqlite" => {
+            Db::set(SqliteConnection::open(&cfg.database.url)?);
+        }
+        "postgres" => {
+            Db::set(
+                PgConnection::builder(&cfg.database.url)
+                    .max_connections(10)
+                    .checkout_timeout(std::time::Duration::from_secs(10))
+                    .statement_timeout_ms(5_000)
+                    .connect()?,
+            );
+        }
+        other => {
+            return Err(OrmError::Invalid(format!(
+                "unknown database driver `{other}` (expected `sqlite` or `postgres`)"
+            )));
+        }
+    }
     fornthulani_plugin_orm::register_validation_rules();
     Ok(())
 }
@@ -620,19 +804,22 @@ pub fn down(db: &dyn Executor) -> OrmResult<()> {
 "#;
 
 const MIGRATION_SEED_USER: &str = r#"use fornthulani_plugin_auth::prelude::PasswordHasher;
-use fornthulani_plugin_orm::{Executor, OrmResult, Query, SqlValue};
+use fornthulani_plugin_orm::{Executor, OrmError, OrmResult, Query, Model};
+use serde_json::json;
+
+use crate::models::user::User;
 
 pub fn up(db: &dyn Executor) -> OrmResult<()> {
     let hasher = PasswordHasher::new();
     let phc = hasher
         .hash("hunter2hunter2")
-        .map_err(|e| fornthulani_plugin_orm::OrmError::Db(format!("hash: {e}")))?;
-    Query::new("users").insert_on(
+        .map_err(|e| OrmError::Db(format!("hash: {e}")))?;
+    User::create_on(
         db,
-        vec![
-            ("email".into(), SqlValue::Text("demo@example.com".into())),
-            ("password_hash".into(), SqlValue::Text(phc)),
-        ],
+        &json!({
+            "email": "demo@example.com",
+            "password_hash": phc,
+        }),
     )?;
     Ok(())
 }
@@ -685,7 +872,8 @@ pub struct LoggingChannel {
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct DatabaseConfig {
-    pub path: String,
+    pub driver: String,
+    pub url: String,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -717,7 +905,7 @@ impl Default for LoggingConfig {
 
 impl Default for DatabaseConfig {
     fn default() -> Self {
-        Self { path: "app.db".into() }
+        Self { driver: "sqlite".into(), url: "app.db".into() }
     }
 }
 
@@ -756,7 +944,8 @@ impl Config {
             self.server.port = p;
         }
         if let Ok(v) = std::env::var("LOGGING_APP_LOG") { self.logging.app_log = v; }
-        if let Ok(v) = std::env::var("DATABASE_PATH") { self.database.path = v; }
+        if let Ok(v) = std::env::var("DATABASE_DRIVER") { self.database.driver = v; }
+        if let Ok(v) = std::env::var("DATABASE_URL") { self.database.url = v; }
         if let Ok(v) = std::env::var("JWT_SECRET") { self.auth.jwt_secret = v; }
         if let Ok(v) = std::env::var("CSRF_SECRET") { self.auth.csrf_secret = v; }
         if let Ok(v) = std::env::var("API_KEY") { self.auth.api_key = v; }
@@ -857,43 +1046,4 @@ pub fn get() -> &'static Config {
         }
     })
 }
-"#;
-
-const CURL_SH: &str = r#"#!/usr/bin/env bash
-set -euo pipefail
-BASE="${BASE:-http://127.0.0.1:8080}"
-EMAIL="${EMAIL:-demo@example.com}"
-PASSWORD="${PASSWORD:-hunter2hunter2}"
-
-PASS=0
-FAIL=0
-ok() { echo "  ok $1"; PASS=$((PASS+1)); }
-no() { echo "  FAIL $1"; FAIL=$((FAIL+1)); }
-status() { curl -s -o /dev/null -w '%{http_code}' "$@"; }
-jget() { python3 -c "import sys,json;print(json.load(sys.stdin)$1)" 2>/dev/null || echo ""; }
-
-echo "== Hello =="
-S=$(status "$BASE/hello"); [[ "$S" == "200" ]] && ok "GET /hello" || no "GET /hello ($S)"
-
-echo "== Login =="
-S=$(status -X POST "$BASE/login" -H 'content-type: application/json' -d '{"email":"wrong@x.io","password":"xxxxxxxx"}')
-[[ "$S" == "401" ]] && ok "POST /login (bad creds)" || no "POST /login bad ($S)"
-
-LOGIN=$(curl -s -X POST "$BASE/login" -H 'content-type: application/json' \
-  -d "{\"email\":\"$EMAIL\",\"password\":\"$PASSWORD\"}")
-TOKEN=$(echo "$LOGIN" | jget "['token']")
-[[ -n "$TOKEN" ]] && ok "POST /login (good creds)" || no "POST /login good"
-
-echo "== Me =="
-S=$(status "$BASE/me"); [[ "$S" == "401" ]] && ok "GET /me (no token)" || no "GET /me no token ($S)"
-S=$(status "$BASE/me" -H "Authorization: Bearer $TOKEN")
-[[ "$S" == "200" ]] && ok "GET /me (with token)" || no "GET /me with token ($S)"
-
-echo "== Logging =="
-[[ -f storage/logs/app.log ]] && ok "app.log exists" || no "app.log missing"
-[[ -f storage/logs/auth.log ]] && ok "auth.log exists" || no "auth.log missing"
-
-echo
-echo "Passed: $PASS  Failed: $FAIL"
-[[ $FAIL -eq 0 ]] || exit 1
 "#;
