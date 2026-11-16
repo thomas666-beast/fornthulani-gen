@@ -1,8 +1,8 @@
 [package]
 name = "fornthulani-gen"
-version = "0.2.0"
+version = "0.5.0"
 edition = "2024"
-description = "Project generator for the fornthulani micro framework."
+description = "Project generator for the fornthulani micro HTTP framework."
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/thomas666-beast/fornthulani-gen"
 keywords = ["fornthulani", "scaffold", "generate"]
@@ -15,3 +15,5 @@ path = "src/main.rs"
 [dependencies]
 anyhow = "1"
 clap = { version = "4", features = ["derive"] }
+getrandom = "0.2"
+base64 = "0.22"
