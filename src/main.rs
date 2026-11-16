@@ -7,7 +7,7 @@ mod names;
 mod templates;
 
 use names::{Field, parse_fields, pascal, plural, snake, timestamp_now};
-use templates::{ThulaniDep, app, controller, orm, plugin, route, service};
+use templates::{ThulaniDep, app, controller, orm, package, plugin, route, service};
 
 #[derive(Parser)]
 #[command(name = "fornthulani", version, about = "fornthulani project generator")]
@@ -85,6 +85,21 @@ enum Generate {
         #[arg(value_name = "FIELD")]
         fields: Vec<String>,
     },
+
+    /// A standalone publishable plugin crate:  generate package my-rate-limit
+    Package {
+        name: String,
+
+        /// Directory to create (defaults to ./<name>/)
+        #[arg(long)]
+        path: Option<String>,
+
+        #[arg(long, conflicts_with = "fornthulani_path")]
+        fornthulani_version: Option<String>,
+
+        #[arg(long, conflicts_with = "fornthulani_version", hide = true)]
+        fornthulani_path: Option<String>,
+    },
 }
 
 fn main() -> Result<()> {
@@ -113,6 +128,12 @@ fn main() -> Result<()> {
             Generate::Migration { name } => generate_migration(&name),
             Generate::Request { name, fields } => generate_request(&name, &fields),
             Generate::Resource { name, fields } => generate_resource(&name, &fields),
+            Generate::Package {
+                name,
+                path,
+                fornthulani_version,
+                fornthulani_path,
+            } => generate_package(&name, path, fornthulani_version, fornthulani_path),
         },
     }
 }
@@ -143,6 +164,46 @@ fn generate_app(name: &str, dep: ThulaniDep, orm: bool) -> Result<()> {
         println!("  cargo run -- migrate");
     }
     println!("  cargo run");
+    Ok(())
+}
+
+// ---------- generate package ----------
+
+fn generate_package(
+    name: &str,
+    path: Option<String>,
+    fornthulani_version: Option<String>,
+    fornthulani_path: Option<String>,
+) -> Result<()> {
+    let snake = sanitize_ident(name)?;
+    let pascal = pascal(&snake);
+    let krate = format!("fornthulani-plugin-{snake}");
+
+    let root = match path {
+        Some(p) => PathBuf::from(p),
+        None => PathBuf::from(&snake),
+    };
+    if root.exists() {
+        bail!("`{}` already exists", root.display());
+    }
+
+    let dep = match (fornthulani_path, fornthulani_version) {
+        (Some(p), _) => format!("path = \"{p}\""),
+        (None, Some(v)) => format!("version = \"{v}\""),
+        (None, None) => "path = \"../fornthulani\", version = \"0.2.0\"".to_string(),
+    };
+
+    for (rel, content) in package::files(&pascal, &snake, &krate, &dep) {
+        write_file(&root, Path::new(&rel), &content)?;
+    }
+    init_git(&root)?;
+
+    println!("created {}", root.display());
+    println!();
+    println!("  cd {}", root.display());
+    println!("  cargo test                 # unit + 3 integration tests");
+    println!("  cargo publish --dry-run    # verify the package shape");
+    println!("  cargo publish              # when you're ready");
     Ok(())
 }
 
@@ -456,7 +517,6 @@ fn is_valid_crate_name(s: &str) -> bool {
 }
 
 /// A safe snake_case module/identifier built from user input.
-/// Rejects names that would not make a valid Rust module.
 fn sanitize_ident(s: &str) -> Result<String> {
     let id = snake(s);
     let valid = id.chars().next().is_some_and(|c| c.is_ascii_lowercase());

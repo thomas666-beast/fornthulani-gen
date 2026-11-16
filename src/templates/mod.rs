@@ -1,6 +1,7 @@
 pub mod app;
 pub mod controller;
 pub mod orm;
+pub mod package;
 pub mod plugin;
 pub mod route;
 pub mod service;

@@ -38,6 +38,7 @@ COMMANDS
   fornthulani generate controller <name>       add only a controller
   fornthulani generate service <name>          add a service
   fornthulani generate plugin <name>           add a Middleware plugin
+  fornthulani generate package <name>          A standalone publishable plugin crate:  generate package my-rate-limit
 
 With the ORM (create the app with `--orm`):
 
